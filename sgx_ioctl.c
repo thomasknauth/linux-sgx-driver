@@ -135,6 +135,8 @@ static long sgx_ioc_enclave_create(struct file *filep, unsigned int cmd,
 	return ret;
 }
 
+static uint8_t zero_page[4096] = {0, };
+
 /**
  * sgx_ioc_enclave_add_page - handler for %SGX_IOC_ENCLAVE_ADD_PAGE
  *
@@ -159,10 +161,25 @@ static long sgx_ioc_enclave_add_page(struct file *filep, unsigned int cmd,
 	struct page *data_page;
 	void *data;
 	int ret;
+  uint64_t pages_to_add = 1;
 
 	ret = sgx_get_encl(addp->addr, &encl);
 	if (ret)
 		return ret;
+
+  // If mrmask is neither 0 nor 0xFFFF, this is the special case of
+  // adding a range of zero-initialized heap pages. In this case,
+  // addp->src signifies the size of the heap region.
+  if (addp->mrmask != 0 && addp->mrmask != 0xFFFF) {
+      // Reset mrmask to 0 since we do not want to measure the heap.
+      addp->mrmask = 0;
+      pages_to_add = addp->src / PAGE_SIZE;
+      printk("Adding %llu zero pages!\n", pages_to_add);
+      // Set src to 0 to indicate that userspace did not provide a
+      // source page. Instead, the driver provides a zero page as the
+      // source for EADD.
+      addp->src = 0;
+  }
 
 	if (copy_from_user(&secinfo, (void __user *)secinfop,
 			   sizeof(secinfo))) {
@@ -170,26 +187,43 @@ static long sgx_ioc_enclave_add_page(struct file *filep, unsigned int cmd,
 		return -EFAULT;
 	}
 
-	data_page = alloc_page(GFP_HIGHUSER);
-	if (!data_page) {
-		kref_put(&encl->refcount, sgx_encl_release);
-		return -ENOMEM;
-	}
+  // If userspace provided a page, allocate some memory and
+  // copy. Otherwise, use internal zero page for actual EADD
+  // instruction.
+  if (addp->src) {
+      data_page = alloc_page(GFP_HIGHUSER);
+      if (!data_page) {
+          kref_put(&encl->refcount, sgx_encl_release);
+          return -ENOMEM;
+      }
 
-	data = kmap(data_page);
+      data = kmap(data_page);
 
-	ret = copy_from_user((void *)data, (void __user *)addp->src, PAGE_SIZE);
-	if (ret)
-		goto out;
+      ret = copy_from_user((void *)data, (void __user *)addp->src, PAGE_SIZE);
+      if (ret)
+          goto out;
+  } else {
+      data_page = NULL;
+      data = zero_page;
+  }
 
-	ret = sgx_encl_add_page(encl, addp->addr, data, &secinfo, addp->mrmask);
-	if (ret)
-		goto out;
+  do {
+      if (need_resched())
+          cond_resched();
+
+      ret = sgx_encl_add_page(encl, addp->addr, data, &secinfo, addp->mrmask);
+      if (ret)
+          goto out;
+      addp->addr += 4096;
+      pages_to_add--;
+  } while (pages_to_add > 0);
 
 out:
 	kref_put(&encl->refcount, sgx_encl_release);
-	kunmap(data_page);
-	__free_page(data_page);
+	if (data_page) {
+      kunmap(data_page);
+      __free_page(data_page);
+  }
 	return ret;
 }
 

@@ -89,6 +89,8 @@ struct sgx_encl_page *sgx_encl_augment(struct vm_area_struct *vma,
 	void *secs_va;
 	int ret = -EFAULT;
 
+  /* printk("%s\n", __FUNCTION__); */
+  
 	if (!sgx_has_sgx2)
 		return ERR_PTR(-EFAULT);
 

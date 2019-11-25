@@ -123,8 +123,23 @@ static int sgx_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 #endif
 	struct sgx_encl_page *entry;
 
-	entry = sgx_fault_page(vma, addr, 0, vmf);
-
+#ifndef REDUCE_PAGE_FAULTS_ON_EAUG_EACCEPT
+  printk("%s:%d %lx %lx %lx\n", __FUNCTION__, __LINE__, addr, vma->vm_start, vma->vm_end);
+  unsigned long size_byte = 128 * 1024 * 1024;
+  if (addr - vma->vm_start + 4096 == size_byte) {
+      printk("%s:%d 'tis the big one\n", __FUNCTION__, __LINE__);
+      unsigned long addr_it;
+      for (addr_it = addr; addr_it >= vma->vm_start; addr_it -= 4096) {
+          	entry = sgx_fault_page(vma, addr_it, 0, vmf);
+      }
+      printk("%s:%d done\n", __FUNCTION__, __LINE__);
+  } else {
+      entry = sgx_fault_page(vma, addr, 0, vmf);
+  }
+#else
+  entry = sgx_fault_page(vma, addr, 0, vmf);
+#endif
+  
 	if (!IS_ERR(entry) || PTR_ERR(entry) == -EBUSY)
 		return VM_FAULT_NOPAGE;
 	else

@@ -233,8 +233,8 @@ static struct sgx_encl_page *sgx_do_fault(struct vm_area_struct *vma,
 
 	entry = radix_tree_lookup(&encl->page_tree, addr >> PAGE_SHIFT);
 	if (vmf && !entry) {
-		entry = sgx_encl_augment(vma, addr, write);
-		goto out;
+      entry = sgx_encl_augment(vma, addr, write);
+      goto out;
 	}
 
 	/* No entry found can not happen in 'reloading an evicted page'
